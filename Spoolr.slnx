@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Spoolr.Api/Spoolr.Api.csproj" />
+    <Project Path="src/Spoolr.Core/Spoolr.Core.csproj" />
+    <Project Path="src/Spoolr.Infrastructure/Spoolr.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Spoolr.IntegrationTests/Spoolr.IntegrationTests.csproj" />
+    <Project Path="tests/Spoolr.UnitTests/Spoolr.UnitTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,47 @@
+## .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Test results
+[Tt]est[Rr]esult*/
+coverage/
+*.coverage
+*.trx
+*.cobertura.xml
+
+## Rider / Visual Studio / VS Code
+.vs/
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+
+## Local secrets and environment
+*.env
+.env.*
+appsettings.Local.json
+secrets.json
+
+## Local database files
+*.db
+*.db-shm
+*.db-wal
+
+## OS noise
+Thumbs.db
+.DS_Store
+
+## Personal documents - never publish these to a public remote
+*.pdf
+*.docx
