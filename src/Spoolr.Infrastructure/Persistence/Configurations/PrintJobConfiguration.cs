@@ -13,6 +13,10 @@ internal sealed class PrintJobConfiguration : IEntityTypeConfiguration<PrintJob>
 
         builder.HasKey(j => j.Id);
 
+        // Version 7 GUIDs are assigned by the domain, so the database must not try to
+        // generate its own.
+        builder.Property(j => j.Id).ValueGeneratedNever();
+
         // Guards the claim: two dispatcher replicas reading the same row both write with
         // the version they read, and the loser gets a concurrency exception instead of
         // silently overwriting the winner.

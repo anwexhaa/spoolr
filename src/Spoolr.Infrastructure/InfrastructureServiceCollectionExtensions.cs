@@ -3,6 +3,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Spoolr.Core.Abstractions;
 using Spoolr.Core.Resilience;
@@ -10,6 +11,7 @@ using Spoolr.Infrastructure.Configuration;
 using Spoolr.Infrastructure.Messaging;
 using Spoolr.Infrastructure.Persistence;
 using Spoolr.Infrastructure.Security;
+using Spoolr.Infrastructure.Workers;
 
 namespace Spoolr.Infrastructure;
 
@@ -49,6 +51,12 @@ public static class InfrastructureServiceCollectionExtensions
         });
 
         AddEventPublisher(services, configuration);
+
+        // Injected rather than read statically, so tests can drive the sweep timer without
+        // waiting on real seconds.
+        services.TryAddSingleton(TimeProvider.System);
+
+        services.AddHostedService<StalledJobSweeper>();
 
         return services;
     }

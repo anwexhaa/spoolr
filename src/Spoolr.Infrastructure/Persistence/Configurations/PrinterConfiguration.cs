@@ -12,6 +12,9 @@ internal sealed class PrinterConfiguration : IEntityTypeConfiguration<Printer>
 
         builder.HasKey(p => p.Id);
 
+        // Assigned by the domain, not the database.
+        builder.Property(p => p.Id).ValueGeneratedNever();
+
         builder.Property(p => p.Version).IsConcurrencyToken();
 
         builder.Property(p => p.Name).HasMaxLength(128).IsRequired();

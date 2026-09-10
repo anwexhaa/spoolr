@@ -16,6 +16,15 @@ public sealed class SpoolrDbContext(DbContextOptions<SpoolrDbContext> options) :
 
     public DbSet<Printer> Printers => Set<Printer>();
 
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+
+        // Applied to every timestamp in the model rather than property by property, so a
+        // new entity cannot quietly reintroduce a column the dispatcher cannot filter on.
+        configurationBuilder.Properties<DateTimeOffset>().HaveConversion<UtcMillisecondsConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

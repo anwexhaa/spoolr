@@ -75,12 +75,20 @@ public sealed class EfPrintJobStore(SpoolrDbContext db, ILogger<EfPrintJobStore>
                 await db.SaveChangesAsync(cancellationToken);
                 return candidate;
             }
-            catch (DbUpdateConcurrencyException)
+            catch (DbUpdateException ex)
             {
-                // Another replica claimed this job between our read and our write. The
-                // version check did its job. Drop the stale copy and target the next one
-                // rather than handing the same job to two printers.
+                // Another replica claimed this job between our read and our write. Two
+                // defences can report that, and either is a lost race:
+                //
+                //   DbUpdateConcurrencyException  the version column moved under us
+                //   a unique violation            the winner already wrote attempt N
+                //
+                // Which one surfaces depends on the order of statements in the batch, so
+                // catching only the first would let the second escape as a request failure.
+                // Nothing else is written in this unit of work, so any failure here means
+                // the claim did not land.
                 logger.LogDebug(
+                    ex,
                     "Lost claim race for job {JobId} on printer {PrinterId}, retargeting.",
                     candidate.Id,
                     printerId);
