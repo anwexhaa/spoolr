@@ -203,8 +203,8 @@ publishes to. No connection string or shared key is stored anywhere.
 az deployment group create --resource-group spoolr-dev --template-file infra/main.bicep --parameters sqlAdminObjectId=<object-id> sqlAdminLogin=<group-name>
 ```
 
-This template has not been deployed against a live subscription, so treat the resource
-wiring as reviewed but unproven.
+The template compiles clean. It has not been deployed against a live subscription, so treat
+the resource wiring as reviewed but unproven.
 
 `MigrateOnStartup` is off by default. Several replicas starting at once would otherwise
 race to create the same schema, so a deployed environment should migrate as its own step.
