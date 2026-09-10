@@ -9,6 +9,7 @@ using Spoolr.Core.Abstractions;
 using Spoolr.Core.Resilience;
 using Spoolr.Infrastructure.Configuration;
 using Spoolr.Infrastructure.Messaging;
+using Spoolr.Infrastructure.Observability;
 using Spoolr.Infrastructure.Persistence;
 using Spoolr.Infrastructure.Security;
 using Spoolr.Infrastructure.Workers;
@@ -55,6 +56,9 @@ public static class InfrastructureServiceCollectionExtensions
         // Injected rather than read statically, so tests can drive the sweep timer without
         // waiting on real seconds.
         services.TryAddSingleton(TimeProvider.System);
+
+        services.AddMetrics();
+        services.AddSingleton<SpoolrMetrics>();
 
         services.AddHostedService<StalledJobSweeper>();
 

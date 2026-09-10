@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Spoolr.Core.Abstractions;
 using Spoolr.Infrastructure.Configuration;
+using Spoolr.Infrastructure.Observability;
 
 namespace Spoolr.Infrastructure.Workers;
 
@@ -22,6 +23,7 @@ public sealed class StalledJobSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<DispatchOptions> options,
     TimeProvider timeProvider,
+    SpoolrMetrics metrics,
     ILogger<StalledJobSweeper> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -69,17 +71,23 @@ public sealed class StalledJobSweeper(
         await using var scope = scopeFactory.CreateAsyncScope();
 
         var jobs = scope.ServiceProvider.GetRequiredService<IPrintJobStore>();
+        var now = timeProvider.GetUtcNow();
 
         var recovered = await jobs.ReclaimStalledAsync(
             dispatchTimeout,
             requeueDelay,
-            timeProvider.GetUtcNow(),
+            now,
             cancellationToken);
 
         if (recovered > 0)
         {
+            metrics.JobsRecovered(recovered);
             logger.LogWarning("Recovered {Count} stalled job(s).", recovered);
         }
+
+        // Sampled here rather than on metric scrape, so a monitoring system polling the
+        // gauge never reaches the database itself.
+        metrics.ReportQueueDepth(await jobs.CountClaimableAsync(now, cancellationToken));
     }
 
     private static async Task<bool> SafeWaitAsync(PeriodicTimer timer, CancellationToken cancellationToken)
