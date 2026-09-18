@@ -1,4 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Spoolr.Core.Jobs;
 using Spoolr.Core.Printers;
 
@@ -75,6 +78,24 @@ public sealed record SubmitJobRequest
     public required int PageCount { get; init; }
 
     public JobPriority Priority { get; init; } = JobPriority.Normal;
+
+    /// <summary>
+    /// A stable hash of what this request asks for, compared when an idempotency key is
+    /// reused. Built from the normalised fields rather than the raw body, so a retry that
+    /// differs only in whitespace or property order still counts as the same request.
+    /// </summary>
+    public string Fingerprint()
+    {
+        var canonical = JsonSerializer.Serialize(new
+        {
+            PrinterId,
+            DocumentName = DocumentName.Trim(),
+            PageCount,
+            Priority,
+        });
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
 }
 
 public sealed record JobAttemptResponse(

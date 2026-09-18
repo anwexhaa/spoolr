@@ -331,6 +331,114 @@ public sealed class PrintJobLifecycleTests(SpoolrApiFactory factory) : IClassFix
         Assert.All(page.Items, job => Assert.Equal(JobStatus.Queued, job.Status));
     }
 
+    [Fact]
+    public async Task Submit_RetriedWithTheSameIdempotencyKey_CreatesOneJob()
+    {
+        using var client = factory.CreateClient();
+        var printer = await RegisterPrinterAsync(client);
+        var request = NewSubmitRequest(printer.Id, "invoice.pdf");
+
+        // The client timed out on the first call and does not know whether it landed.
+        var first = await SubmitWithKeyAsync(client, request, "invoice-7781");
+        var retry = await SubmitWithKeyAsync(client, request, "invoice-7781");
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        Assert.False(first.Headers.Contains("Idempotent-Replayed"));
+        Assert.Equal("true", Assert.Single(retry.Headers.GetValues("Idempotent-Replayed")));
+
+        var original = await ReadAsync<JobResponse>(first);
+        var replayed = await ReadAsync<JobResponse>(retry);
+        Assert.Equal(original.Id, replayed.Id);
+        Assert.Equal(first.Headers.Location, retry.Headers.Location);
+
+        var page = await ReadAsync<PagedResponse<JobResponse>>(
+            await client.GetAsync($"/api/v1/jobs?printerId={printer.Id}"));
+
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task Submit_ReusingAKeyForADifferentRequest_IsRejected()
+    {
+        using var client = factory.CreateClient();
+        var printer = await RegisterPrinterAsync(client);
+
+        await SubmitWithKeyAsync(client, NewSubmitRequest(printer.Id, "march.pdf"), "monthly-report");
+
+        var reused = await SubmitWithKeyAsync(client, NewSubmitRequest(printer.Id, "april.pdf"), "monthly-report");
+
+        // Answering with the March job would tell the caller April was queued when it was not.
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, reused.StatusCode);
+    }
+
+    [Fact]
+    public async Task Submit_Replay_ReturnsTheOriginalJobEvenAfterThePrinterIsRetired()
+    {
+        using var client = factory.CreateClient();
+        var printer = await RegisterPrinterAsync(client);
+        var request = NewSubmitRequest(printer.Id, "payslips.pdf");
+
+        var original = await ReadAsync<JobResponse>(await SubmitWithKeyAsync(client, request, "payroll-sept"));
+
+        await client.PostAsync($"/api/v1/printers/{printer.Id}/retire", content: null);
+
+        // A fresh submission would now be refused. A retry is not a fresh submission: the
+        // job already exists, and the caller is owed the answer the first request earned.
+        var retry = await SubmitWithKeyAsync(client, request, "payroll-sept");
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        Assert.Equal(original.Id, (await ReadAsync<JobResponse>(retry)).Id);
+    }
+
+    [Theory]
+    [InlineData("has spaces in it")]
+    [InlineData("tab\there")]
+    public async Task Submit_WithAMalformedIdempotencyKey_IsAValidationProblem(string key)
+    {
+        using var client = factory.CreateClient();
+        var printer = await RegisterPrinterAsync(client);
+
+        var response = await SubmitWithKeyAsync(client, NewSubmitRequest(printer.Id, "doc.pdf"), key);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Submit_WithAnOverlongIdempotencyKey_IsAValidationProblem()
+    {
+        using var client = factory.CreateClient();
+        var printer = await RegisterPrinterAsync(client);
+
+        var response = await SubmitWithKeyAsync(
+            client, NewSubmitRequest(printer.Id, "doc.pdf"), new string('k', 256));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private static SubmitJobRequest NewSubmitRequest(Guid printerId, string documentName) => new()
+    {
+        PrinterId = printerId,
+        DocumentName = documentName,
+        PageCount = 4,
+    };
+
+    private static async Task<HttpResponseMessage> SubmitWithKeyAsync(
+        HttpClient client,
+        SubmitJobRequest request,
+        string idempotencyKey)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, "/api/v1/jobs")
+        {
+            Content = JsonContent.Create(request, options: SpoolrApiFactory.Json),
+        };
+
+        // Added without validation so the test can send keys the service must refuse.
+        message.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+
+        return await client.SendAsync(message);
+    }
+
     private static async Task<JobResponse> FailOnceAsync(HttpClient client, Guid jobId, string error)
     {
         await client.PostAsync("/api/v1/device/jobs/next", content: null);

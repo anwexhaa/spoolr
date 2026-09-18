@@ -28,6 +28,55 @@ public sealed class EfPrintJobStore(SpoolrDbContext db, ILogger<EfPrintJobStore>
             .Include(j => j.Attempts)
             .FirstOrDefaultAsync(j => j.Id == jobId, cancellationToken);
 
+    public async Task<PrintJob?> FindByIdempotencyKeyAsync(
+        string submittedBy,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        await db.Jobs
+            .Include(j => j.Attempts)
+            .FirstOrDefaultAsync(
+                j => j.SubmittedBy == submittedBy && j.IdempotencyKey == idempotencyKey,
+                cancellationToken);
+
+    public async Task<PrintJob> AddOnceAsync(PrintJob job, CancellationToken cancellationToken = default)
+    {
+        if (job.IdempotencyKey is not { } key)
+        {
+            throw new ArgumentException("Only a job that carries an idempotency key can be added once.", nameof(job));
+        }
+
+        await db.Jobs.AddAsync(job, cancellationToken);
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return job;
+        }
+        catch (DbUpdateException ex)
+        {
+            Detach(job);
+
+            // The unique index on (submitter, key) is what refuses a second insert, so a
+            // failure here is usually a concurrent request with the same key that committed
+            // first. If no such job exists, the failure was something else and is not ours
+            // to swallow.
+            var winner = await FindByIdempotencyKeyAsync(job.SubmittedBy, key, cancellationToken);
+
+            if (winner is null)
+            {
+                throw;
+            }
+
+            logger.LogDebug(
+                ex,
+                "Lost an idempotency-key race for key {IdempotencyKey}; returning job {JobId}.",
+                key,
+                winner.Id);
+
+            return winner;
+        }
+    }
+
     public async Task<IReadOnlyList<PrintJob>> ListAsync(
         JobQuery query,
         CancellationToken cancellationToken = default) =>

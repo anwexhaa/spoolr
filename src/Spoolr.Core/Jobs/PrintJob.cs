@@ -81,6 +81,19 @@ public sealed class PrintJob
     public string? LastError { get; private set; }
 
     /// <summary>
+    /// The key the submitter sent to make the request safe to retry, if any. At most one
+    /// job exists per submitter and key, so a retried request finds this job instead of
+    /// creating a second one.
+    /// </summary>
+    public string? IdempotencyKey { get; private init; }
+
+    /// <summary>
+    /// Fingerprint of the request that created the job. A retry carrying the same key but a
+    /// different body is a client bug, and this is what detects it.
+    /// </summary>
+    public string? RequestHash { get; private init; }
+
+    /// <summary>
     /// Incremented on every mutation and mapped as an EF Core concurrency token, so two
     /// dispatcher replicas racing for the same job cannot both win the claim.
     /// </summary>
@@ -97,6 +110,11 @@ public sealed class PrintJob
     /// <summary>
     /// Accepts a new job onto the queue.
     /// </summary>
+    /// <param name="idempotencyKey">
+    /// Optional client-chosen key that makes the submission safe to retry. When given,
+    /// <paramref name="requestHash"/> is required, so a reused key can be told apart from a
+    /// genuine retry.
+    /// </param>
     public static PrintJob Submit(
         Guid printerId,
         string documentName,
@@ -104,12 +122,20 @@ public sealed class PrintJob
         JobPriority priority,
         string submittedBy,
         DateTimeOffset now,
-        int maxAttempts = 3)
+        int maxAttempts = 3,
+        string? idempotencyKey = null,
+        string? requestHash = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(documentName);
         ArgumentException.ThrowIfNullOrWhiteSpace(submittedBy);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAttempts);
+
+        if (idempotencyKey is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+            ArgumentException.ThrowIfNullOrWhiteSpace(requestHash);
+        }
 
         return new PrintJob
         {
@@ -126,6 +152,8 @@ public sealed class PrintJob
             MaxAttempts = maxAttempts,
             AvailableAt = now,
             SubmittedAt = now,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = idempotencyKey is null ? null : requestHash,
         };
     }
 

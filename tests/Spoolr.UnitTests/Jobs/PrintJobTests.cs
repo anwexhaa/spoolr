@@ -55,6 +55,35 @@ public sealed class PrintJobTests
     }
 
     [Fact]
+    public void Submit_WithAnIdempotencyKey_KeepsTheKeyAndTheRequestHash()
+    {
+        var job = PrintJob.Submit(
+            PrinterId, "doc.pdf", 1, JobPriority.Normal, "user@contoso.com", Now,
+            idempotencyKey: "order-42", requestHash: "ABC123");
+
+        Assert.Equal("order-42", job.IdempotencyKey);
+        Assert.Equal("ABC123", job.RequestHash);
+    }
+
+    [Fact]
+    public void Submit_WithAnIdempotencyKey_RequiresARequestHash() =>
+        // Without the hash, a reused key could not be told apart from a genuine retry.
+        Assert.ThrowsAny<ArgumentException>(() => PrintJob.Submit(
+            PrinterId, "doc.pdf", 1, JobPriority.Normal, "user@contoso.com", Now,
+            idempotencyKey: "order-42", requestHash: null));
+
+    [Fact]
+    public void Submit_WithoutAnIdempotencyKey_StoresNoRequestHash()
+    {
+        var job = PrintJob.Submit(
+            PrinterId, "doc.pdf", 1, JobPriority.Normal, "user@contoso.com", Now,
+            requestHash: "ABC123");
+
+        Assert.Null(job.IdempotencyKey);
+        Assert.Null(job.RequestHash);
+    }
+
+    [Fact]
     public void Dispatch_SpendsAnAttemptAndOpensAnAttemptRecord()
     {
         var job = NewJob();

@@ -90,6 +90,26 @@ does not reveal which printer ids are real. People authenticate through Entra ID
 **Liveness does not touch the database.** A database outage should page someone, not make
 the orchestrator restart every replica that is otherwise fine.
 
+**A retried submission never queues a second job.** A client whose `POST /api/v1/jobs` times
+out cannot tell whether the job was queued. Without help it must choose between a document
+that might never print and one that might print twice. So submissions accept an
+`Idempotency-Key` header, the same contract payment APIs use for charges:
+
+- The first request with a key creates the job and stores the key and a SHA-256 fingerprint
+  of the request on the job's row, in the same insert.
+- A retry with the same key and the same request gets that job back, `201` with the same
+  `Location`, marked `Idempotent-Replayed: true`. Nothing is queued, counted, or published
+  twice.
+- The same key with a *different* request is refused with `422`. Returning the earlier job
+  would tell the client its new request succeeded when it never ran.
+- A replay is answered before any validation, so a retry still gets its job even if the
+  printer has been retired since. The caller is owed the answer the first request earned.
+
+The lookup alone is not enough: two concurrent requests with one key can both miss it. A
+unique index on `(SubmittedBy, IdempotencyKey)` makes the second insert fail, and the store
+answers the loser with the winner's job. Keys are scoped to the submitter, so two callers who
+pick the same key never collide.
+
 ## Running it locally
 
 No Azure subscription, no Docker, no database server. Every external dependency falls back
@@ -115,10 +135,11 @@ Register a printer. The device key comes back exactly once and is never recovera
 curl -k -X POST https://localhost:7256/api/v1/printers -H 'Content-Type: application/json' -d '{"name":"HQ-Floor3","location":"Hyderabad / Floor 3","model":"Contoso LaserJet 9000","supportsColor":true,"maxPagesPerJob":500}'
 ```
 
-Submit a job to it.
+Submit a job to it. The `Idempotency-Key` is optional; send it and the call is safe to retry.
+Run it twice and the second response carries the same job and `Idempotent-Replayed: true`.
 
 ```bash
-curl -k -X POST https://localhost:7256/api/v1/jobs -H 'Content-Type: application/json' -d '{"printerId":"PRINTER_ID","documentName":"report.pdf","pageCount":12,"priority":"High"}'
+curl -k -i -X POST https://localhost:7256/api/v1/jobs -H 'Content-Type: application/json' -H 'Idempotency-Key: report-2026-09' -d '{"printerId":"PRINTER_ID","documentName":"report.pdf","pageCount":12,"priority":"High"}'
 ```
 
 Claim it as the printer. This is the call a real device would poll.
@@ -140,7 +161,7 @@ curl -k -X POST https://localhost:7256/api/v1/device/jobs/JOB_ID/result -H 'Auth
 | `POST` | `/api/v1/printers` | Operator. Registers a device and issues its key. |
 | `GET` | `/api/v1/printers` | Operator. Lists devices with derived status. |
 | `POST` | `/api/v1/printers/{id}/retire` | Operator. Takes a device out of service. |
-| `POST` | `/api/v1/jobs` | Operator. Queues a document. |
+| `POST` | `/api/v1/jobs` | Operator. Queues a document. Safe to retry with `Idempotency-Key`. |
 | `GET` | `/api/v1/jobs` | Operator. Filters by printer and status. |
 | `POST` | `/api/v1/jobs/{id}/cancel` | Operator. Withdraws an unfinished job. |
 | `POST` | `/api/v1/device/heartbeat` | Printer. Checks in. |
@@ -180,13 +201,17 @@ when a connection string is configured.
 dotnet test
 ```
 
-81 tests, split between the domain and the running service.
+94 tests, split between the domain and the running service.
 
 The unit tests cover the transition table, attempt accounting, heartbeat staleness, and the
 backoff schedule. Store tests run against real SQLite rather than the in-memory provider,
 which is what caught three problems the in-memory provider would have hidden: the untranslatable
 timestamp comparison, EF issuing an `UPDATE` instead of an `INSERT` for domain-assigned GUID
 keys, and the unique index on attempt number firing before the concurrency check.
+
+The idempotency tests include the case that is easiest to get wrong: another request's job is
+committed after this request's lookup has already missed it. The insert has to come back with
+that earlier job, not an error and not a second job.
 
 The integration tests boot the real host through `WebApplicationFactory` and drive it over
 HTTP with real routing, real authentication handlers, and real EF mappings. Only the

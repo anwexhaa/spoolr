@@ -57,5 +57,17 @@ internal sealed class PrintJobConfiguration : IEntityTypeConfiguration<PrintJob>
 
         builder.HasIndex(j => j.SubmittedBy)
             .HasDatabaseName("IX_PrintJobs_SubmittedBy");
+
+        builder.Property(j => j.IdempotencyKey).HasMaxLength(255);
+        builder.Property(j => j.RequestHash).HasMaxLength(64);
+
+        // The guarantee behind idempotent submission. Two requests carrying the same key can
+        // both miss the lookup and both try to insert; this index makes the second insert
+        // fail, so exactly one job is ever created per key. Filtered because most jobs carry
+        // no key, and SQL Server would otherwise treat every NULL as a duplicate.
+        builder.HasIndex(j => new { j.SubmittedBy, j.IdempotencyKey })
+            .IsUnique()
+            .HasFilter("[IdempotencyKey] IS NOT NULL")
+            .HasDatabaseName("IX_PrintJobs_IdempotencyKey");
     }
 }

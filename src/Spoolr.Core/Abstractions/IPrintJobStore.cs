@@ -27,6 +27,26 @@ public interface IPrintJobStore
 
     Task<PrintJob?> FindAsync(Guid jobId, CancellationToken cancellationToken = default);
 
+    /// <summary>Finds the job a submitter created with a given idempotency key, if any.</summary>
+    Task<PrintJob?> FindByIdempotencyKeyAsync(
+        string submittedBy,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves a new job that carries an idempotency key, unless another request with the same
+    /// submitter and key has already saved one.
+    /// </summary>
+    /// <remarks>
+    /// Callers look the key up first, but two concurrent requests can both miss that lookup.
+    /// The database decides which one wins; the loser's job is discarded, never saved.
+    /// </remarks>
+    /// <returns>
+    /// The job that owns the key: <paramref name="job"/> itself if it was saved, otherwise
+    /// the one created by the request that got there first.
+    /// </returns>
+    Task<PrintJob> AddOnceAsync(PrintJob job, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<PrintJob>> ListAsync(JobQuery query, CancellationToken cancellationToken = default);
 
     Task<int> CountAsync(JobQuery query, CancellationToken cancellationToken = default);

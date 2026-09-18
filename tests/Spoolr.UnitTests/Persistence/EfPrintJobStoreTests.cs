@@ -278,6 +278,85 @@ public sealed class EfPrintJobStoreTests : IAsyncLifetime
         Assert.Equal("queued.pdf", Assert.Single(onlyQueued).DocumentName);
     }
 
+    [Fact]
+    public async Task AddOnce_SavesTheFirstJobForAKey()
+    {
+        var job = KeyedJob("order-42");
+
+        await using (var db = NewContext())
+        {
+            Assert.Same(job, await NewStore(db).AddOnceAsync(job));
+        }
+
+        await using var verify = NewContext();
+        var stored = await NewStore(verify).FindByIdempotencyKeyAsync(Submitter, "order-42");
+
+        Assert.NotNull(stored);
+        Assert.Equal(job.Id, stored.Id);
+    }
+
+    [Fact]
+    public async Task AddOnce_ReturnsTheEarlierJobWhenAConcurrentRequestTookTheKey()
+    {
+        // The earlier request committed after this one's lookup missed it, which is exactly
+        // the window AddOnce exists for. Its insert must fail on the unique index, and the
+        // caller must get the earlier job back rather than an error.
+        var earlier = KeyedJob("order-42", documentName: "first.pdf");
+        await Seed(earlier);
+
+        await using (var db = NewContext())
+        {
+            var owner = await NewStore(db).AddOnceAsync(KeyedJob("order-42", documentName: "first.pdf"));
+
+            Assert.Equal(earlier.Id, owner.Id);
+        }
+
+        await using var verify = NewContext();
+
+        Assert.Equal(1, await verify.Jobs.CountAsync());
+    }
+
+    [Fact]
+    public async Task IdempotencyKeys_AreScopedToTheSubmitter()
+    {
+        // Two callers who happen to pick the same key are making unrelated requests.
+        await Seed(KeyedJob("order-42"), KeyedJob("order-42", submittedBy: "someone-else@contoso.com"));
+
+        await using var verify = NewContext();
+
+        Assert.Equal(2, await verify.Jobs.CountAsync());
+    }
+
+    [Fact]
+    public async Task IdempotencyKey_IsUniquePerSubmitterInTheSchema()
+    {
+        await Seed(KeyedJob("order-42"));
+
+        await using var db = NewContext();
+        db.Jobs.Add(KeyedJob("order-42"));
+
+        // The lookup can be raced; the index cannot. This is the guarantee AddOnce relies on.
+        var ex = await Assert.ThrowsAnyAsync<DbUpdateException>(() => db.SaveChangesAsync());
+
+        Assert.Contains("UNIQUE", ex.InnerException?.Message ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private const string Submitter = "anwesha@contoso.com";
+
+    private static PrintJob KeyedJob(
+        string key,
+        string documentName = "report.pdf",
+        string submittedBy = Submitter) =>
+        PrintJob.Submit(
+            PrinterId,
+            documentName,
+            pageCount: 3,
+            JobPriority.Normal,
+            submittedBy,
+            Now,
+            idempotencyKey: key,
+            requestHash: "HASH-" + documentName);
+
     private static PrintJob NewJob(
         JobPriority priority = JobPriority.Normal,
         string documentName = "report.pdf",
